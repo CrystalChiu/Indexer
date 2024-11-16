@@ -7,13 +7,19 @@ nltk.download('punkt_tab')
 stemmer = PorterStemmer()
 
 def tokenize(content):
-    # FIXME: this is just a stand in for now to test other mechanisms
-    tokens = word_tokenize(content.lower())
+    token_list = []
+    cur_token = ""
 
-    # get rid of non alphanum characters
-    filtered_tokens = [re.sub(r'\W+', '', token) for token in tokens if token.isalnum()]
+    for char in content:
+        if char.isalnum() and char.isascii():
+            cur_token += char
+        else:
+            if cur_token:
+                token_list.append(cur_token.lower())
+                cur_token = ""
+    if cur_token:
+        token_list.append(cur_token.lower())
 
-    # use porter stemming on acquired tokens
-    stemmed_tokens = [stemmer.stem(token) for token in filtered_tokens]
+    stemmed_tokens = [stemmer.stem(token) for token in token_list]
 
     return stemmed_tokens
