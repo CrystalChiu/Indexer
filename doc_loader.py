@@ -19,8 +19,14 @@ def load_documents(data_dir):
                     # read file content
                     with open(file_path, 'r', encoding=encoding, errors='replace') as file:
                         doc = json.load(file)
+                        document_data = {"content": None, "url": None}
+
+                        if 'url' in doc:
+                            document_data['url'] = doc['url'].split('#')[0]
                         if 'content' in doc:
-                            documents[file_name] = doc['content']
+                            document_data['content'] = doc['content']
+
+                        documents[file_name] = document_data
                 except Exception as e:
                     print(f"Error occurred while reading {file_path}: {e}")
 
