@@ -20,20 +20,6 @@ class Searcher:
         print(f"N: {self.N}")
 
     #-----------Ranked Retrieval-----------
-    # takes query and document vectors to calc cosine similarity of terms
-    def cosine_similarity(self, query_vector, doc_vector):
-        # FORMULA: (A dot B) / (magnitude(A) * magnitude(B))
-        dot_product = sum(query_vector[token] * doc_vector.get(token, 0) for token in query_vector)
-        query_magnitude = math.sqrt(sum(weight**2 for weight in query_vector.values()))
-        doc_magnitude = math.sqrt(sum(weight**2 for weight in doc_vector.values()))
-
-        # avoid divide by zero
-        if query_magnitude == 0 or doc_magnitude == 0:
-            return 0
-
-        return dot_product / (query_magnitude * doc_magnitude)
-
-
     # Retrieves posting list associated with a term via secondary index
     def get_postings(self, term):
         if term not in self.secondary_index:
@@ -51,6 +37,7 @@ class Searcher:
     # convert a query into its vector representation weighted by tf-idf
     def process_query(self, query):
         query_tokens = tokenize(query)
+        print(f"query tokens: {query_tokens}")
         tfs = defaultdict(int)
 
         for token in query_tokens:
@@ -79,6 +66,7 @@ class Searcher:
             reverse=True,
         ):
             postings = self.get_postings(term)
+            print(f"{len(postings)} found for {term}")
             if not postings: continue
 
             query_tf_idf = query_vector[term]
@@ -119,92 +107,32 @@ class Searcher:
 
         return [self.doc_id_url_map[doc_id] for score, doc_id in ranked_results]
 
-    # def handle_phrase_query(self, phrase):
-    #     # Split the phrase into individual terms
-    #     terms = tokenize(phrase)
-    #     postings_lists = []
-    #
-    #     # get positings and positions for each term
-    #     for term in terms:
-    #         print(f"phrase term: {term}")
-    #         postings = self.get_postings(term)
-    #         print(f"\tposting size: {len(postings)}")
-    #         if not postings:
-    #             print(f"No postings found for term: {term}")
-    #             return []
-    #         postings_lists.append(postings)
-    #     print(f"postings_lists size: {len(postings_lists)}")
-    #     print(f"postings_lists[0]: {postings_lists[0]}")
-    #
-    #     # find the intersection of posting lists
-    #     common_docs = set(posting['doc_id'] for posting in postings_lists[0])
-    #     for posting_list in postings_lists[1:]:
-    #         common_docs &= set(posting['doc_id'] for posting in posting_list)
-    #         if not common_docs:
-    #             print("No documents match the query.")
-    #             return []
-    #     print(f"intersection: {common_docs}")
-    #
-    #     # Retrieve positional information and check term proximity
-    #     matching_docs = []
-    #     for doc_id in common_docs:
-    #         term_positions = []
-    #
-    #         # Retrieve positions of each term in the document
-    #         for postings in postings_lists:
-    #             for posting in postings:
-    #                 if posting['doc_id'] == doc_id:
-    #                     term_positions.append(posting['positions'])
-    #                     break
-    #
-    #         # Check if terms are in consecutive order
-    #         if self.check_phrase_positions(term_positions):
-    #             matching_docs.append(doc_id)
-    #
-    #     # Return matching documents with their URLs
-    #     return [self.doc_id_url_map[doc_id] for doc_id in matching_docs]
-
-
-    # def check_phrase_positions(self, positions):
-    #     # check if positions are consecutive for the phrase
-    #     for i in range(1, len(positions)):
-    #         if not any(pos + 1 == positions[i][0] for pos in positions[i - 1]):
-    #             return False
-    #     return True
-
     #-----------Boolean Search-----------
+    # Handles AND boolean queries, returns a list of the top 5 URLs returned
     def bool_search(self, query):
         stemmer = PorterStemmer()
         terms = query.split(' ')
-
-        # apply porter stemming to match how tokens are represented in the inverted index
+    
+        # apply porter stemming to match how tokens represented in inverted index
         stemmed_terms = [stemmer.stem(term) for term in terms]
-
-        # Retrieve posting lists for each stemmed term from the final index
-        posting_lists = []
+    
+        # retrieve posting lists for each term
         with open(self.final_index_file, 'r', encoding='utf-8') as file:
-            # Read each line (assuming each line is a JSON object)
-            for line in file:
-                try:
-                    # Attempt to parse the line as JSON
-                    final_index = json.loads(line.strip())
-                    # Retrieve posting lists for each term
-                    for term in stemmed_terms:
-                        if term in final_index:
-                            posting_lists.append(final_index[term])
-                except json.JSONDecodeError as e:
-                    print(f"Error decoding JSON: {e}")
-                    continue
-
-        # If no posting lists were found, return an empty list
-        if not posting_lists:
-            print("No documents found for any of the terms.")
-            return []
-
-        # Sort the posting lists by length (smallest first for optimization)
+            final_index = json.load(file)
+    
+        # retrieve posting lists for each stemmed term from final merged index
+        posting_lists = []
+        for term in stemmed_terms:
+            if term in final_index:
+                posting_lists.append(final_index[term])
+            else:
+                print(f"No documents found for term: {term}")
+                return []
+    
+        # sort the posting lists by length (smallest first for optimization)
         posting_lists.sort(key=len)
-
-        # Perform intersection of the posting lists
+    
+        # perform intersection of the posting lists
         result_set = set(posting['doc_id'] for posting in posting_lists[0])  # Start with the smallest list
         for posting_list in posting_lists[1:]:
             # Use set intersection to retain only the `doc_id`s present in both sets
@@ -212,59 +140,13 @@ class Searcher:
             if not result_set:
                 print("No documents match the query.")
                 return []
-
+    
         intersected_postings = []
         for posting_list in posting_lists:
             for posting in posting_list:
                 if posting['doc_id'] in result_set:
                     intersected_postings.append(posting)
-
+    
         intersected_postings.sort(key=lambda p: p['tf'], reverse=True)
-
-        urls = OrderedDict((posting['url'], None) for posting in intersected_postings)
-        return list(urls.keys())
-
-
-    # Handles AND boolean queries, returns a list of the top 5 URLs returned
-    # def bool_search(self, query):
-    #     stemmer = PorterStemmer()
-    #     terms = query.split(' ')
-    #
-    #     # apply porter stemming to match how tokens represented in inverted index
-    #     stemmed_terms = [stemmer.stem(term) for term in terms]
-    #
-    #     # retrieve posting lists for each term
-    #     with open(self.final_index_file, 'r', encoding='utf-8') as file:
-    #         final_index = json.load(file)
-    #
-    #     # retrieve posting lists for each stemmed term from final merged index
-    #     posting_lists = []
-    #     for term in stemmed_terms:
-    #         if term in final_index:
-    #             posting_lists.append(final_index[term])
-    #         else:
-    #             print(f"No documents found for term: {term}")
-    #             return []
-    #
-    #     # sort the posting lists by length (smallest first for optimization)
-    #     posting_lists.sort(key=len)
-    #
-    #     # perform intersection of the posting lists
-    #     result_set = set(posting['doc_id'] for posting in posting_lists[0])  # Start with the smallest list
-    #     for posting_list in posting_lists[1:]:
-    #         # Use set intersection to retain only the `doc_id`s present in both sets
-    #         result_set &= set(posting['doc_id'] for posting in posting_list)
-    #         if not result_set:
-    #             print("No documents match the query.")
-    #             return []
-    #
-    #     intersected_postings = []
-    #     for posting_list in posting_lists:
-    #         for posting in posting_list:
-    #             if posting['doc_id'] in result_set:
-    #                 intersected_postings.append(posting)
-    #
-    #     intersected_postings.sort(key=lambda p: p['tf'], reverse=True)
-    #
-    #     urls = OrderedDict((posting['url'], None) for posting in intersected_postings)
-    #     return list(urls.keys())
+    
+        return list(intersected_postings)

@@ -1,4 +1,5 @@
 import math
+import heapq
 import os
 import json
 from collections import defaultdict
@@ -11,6 +12,7 @@ from tokenizer import tokenize
 
 # CONST GLOBALS
 _CHUNK_SIZE = 10000
+# _CHUNK_SIZE = 500
 
 class Indexer:
     def __init__(
@@ -69,12 +71,10 @@ class Indexer:
     def add_document(self, doc_id, content_tokens, url):
         # freq dict of each token in given doc
         term_frequency = defaultdict(int)
-        term_positions = defaultdict(list)
 
         # count occurances of each token in content
         for position, token in enumerate(content_tokens):
             term_frequency[token] += 1
-            term_positions[token].append(position)
             self.unique_tokens.add(token)
 
         # add mapping to url for current document's docID
@@ -84,7 +84,6 @@ class Indexer:
             posting = {
                 "doc_id": doc_id,
                 "tf": count, # store raw term freq
-                "url": url,
             }
             self.inverted_index[token].append(posting)
 
@@ -92,44 +91,76 @@ class Indexer:
     def save_partial_index(self, partial_index_num):
         partial_index_path = os.path.join(self.partial_index_dir, f"partial_index_{partial_index_num}.jsonl")
 
+        # make sure entire index is sorted alphabetically first
         with open(partial_index_path, 'w', encoding='utf-8') as file:
-            for token, postings in self.inverted_index.items():
-                json.dump({token: postings}, file)
+            sorted_inverted_index = sorted(self.inverted_index.items(), key=lambda item: item[0])
+
+            for token, postings in sorted_inverted_index:
+                # sort postings by doc id to be merged efficiently later
+                sorted_postings = sorted(postings, key=lambda x: x['doc_id'])
+                json.dump({token: sorted_postings}, file)
                 file.write("\n")
 
+        print(f"inverted index {partial_index_num} done")
         self.inverted_index.clear()
 
     def multi_way_merge(self):
         partial_files = [
-            os.path.join(self.partial_index_dir, f)
-            for f in os.listdir(self.partial_index_dir) if f.startswith("partial_index_")
+            open(os.path.join(self.partial_index_dir, filename), 'r', encoding='utf-8')
+            for filename in sorted(os.listdir(self.partial_index_dir))
+            if filename.startswith("partial_index_") and filename.endswith(".jsonl")
         ]
 
-        # open a read buffer for every partial index
-        partial_file_iters = []
-        open_files = []
-        try:
-            for file in partial_files:
-                f = open(file, 'r', encoding='utf-8')
-                open_files.append(f)
-                partial_file_iters.append((json.loads(line) for line in f))
+        # Initialize a priority queue (min-heap)
+        # Each element in the heap is a tuple: (term, file_index)
+        heap = []
+        file_pointers = {}
 
-            # continuously write the next entry from a partial index, delimited by newline
-            with open(self.final_index_file, 'w', encoding='utf-8') as final_file:
-                for entry in merge(*partial_file_iters, key=lambda x: next(iter(x.keys()))):
-                    token = next(iter(entry.keys()))
-                    postings = entry[token]
+        # Add the first entry from each partial index into the heap
+        for file_index, partial_file in enumerate(partial_files):
+            line = partial_file.readline()
+            if line:
+                entry = json.loads(line.strip())
+                term = next(iter(entry))  # Get the term
+                heapq.heappush(heap, (term, file_index, entry))
+                file_pointers[file_index] = partial_file
 
-                    json.dump({token: postings}, final_file)
-                    final_file.write("\n")
+        # Open the final index file for writing
+        with open(self.final_index_file, 'w', encoding='utf-8') as final_file:
+            current_term = None
+            merged_postings = []
 
-            # calc final index size
-            self.index_kbs = os.path.getsize(self.final_index_file) / 1024
+            while heap:
+                # Extract the smallest term from the heap
+                term, file_index, entry = heapq.heappop(heap)
+                postings_list = entry[term]
 
-        finally:
-            # close all open files
-            for f in open_files:
-                f.close()
+                # Check if we're still working with the same term
+                if current_term and term != current_term:
+                    # Write the merged term to the final index file
+                    json.dump({current_term: merged_postings}, final_file)
+                    final_file.write('\n')
+                    merged_postings = []
+
+                # Update the current term and merge postings
+                current_term = term
+                merged_postings.extend(postings_list)
+
+                # Read the next entry from the partial file and add it to the heap
+                next_line = file_pointers[file_index].readline()
+                if next_line:
+                    next_entry = json.loads(next_line.strip())
+                    next_term = next(iter(next_entry))
+                    heapq.heappush(heap, (next_term, file_index, next_entry))
+
+            # Write the last term to the final index file
+            if current_term:
+                json.dump({current_term: merged_postings}, final_file)
+                final_file.write('\n')
+
+        # Close all open partial index files
+        for partial_file in partial_files:
+            partial_file.close()
 
     # Creates secondary offset index and finds the vector length of each unique document
     def finish_final_index(self):
@@ -200,4 +231,4 @@ class Indexer:
 
         self.save_doc_id_url_map()  # DEBUG
         self.multi_way_merge()  # build final index
-        self.finish_final_index()  # build bookkeeping index once final index done
+        self.finish_final_index()  # build bookkeeping index & doc vector length once final index done

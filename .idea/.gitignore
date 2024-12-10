@@ -9,3 +9,8 @@
 DEV/
 TEST/
 PARTIAL_INDEXES/
+backups/
+final_index
+doc_id_url_map.json
+doc_len_file.json
+secondary_index.json
