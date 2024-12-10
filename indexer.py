@@ -67,8 +67,37 @@ class Indexer:
 
     #-------------INDEX FUNCTIONS------------
 
+    # helper function to populate term field frequency map
+    def build_term_field_freq_dict(self, soup):
+        res = defaultdict(lambda: defaultdict(int)) #  {title: n, headings: m, ...}
+
+        # retrieve all text within each field to be processed
+        field_extractors = {
+            "title": lambda: tokenize(soup.title.get_text(separator=" ").strip()) if soup.title else [],
+            "heading": lambda: [
+                token for heading in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                for token in tokenize(heading.get_text(separator=" ").strip())
+            ],
+            "bold": lambda: [
+                token for bold in soup.find_all(['b', 'strong'])
+                for token in tokenize(bold.get_text(separator=" ").strip())
+            ],
+            "misc": lambda: tokenize(soup.get_text(separator=" ").strip())  # Catch-all for everything else
+        }
+
+        # build freq map for each field
+        for field, extractor in field_extractors.items():
+            tokens = extractor()
+            for token in tokens:
+                res[token][field] += 1
+                self.unique_tokens.add(token)
+
+        return res
+
     # Extracts the tokens and their freq from the current document to make posting and put each token into index
-    def add_document(self, doc_id, content_tokens, url):
+    def add_document(self, doc_id, content_tokens, url, soup):
+        term_field_freq = self.build_term_field_freq_dict(soup)
+
         # freq dict of each token in given doc
         term_frequency = defaultdict(int)
 
@@ -83,7 +112,8 @@ class Indexer:
         for token, count in term_frequency.items():
             posting = {
                 "doc_id": doc_id,
-                "tf": count, # store raw term freq
+                "tf": count,  # store raw term freq
+                "fields": term_field_freq[token]  # store how many times token shows up in each field
             }
             self.inverted_index[token].append(posting)
 
@@ -213,14 +243,14 @@ class Indexer:
             try:
                 for _ in range(_CHUNK_SIZE):
                     doc_id, doc_data = next(documents_iter)
-                    content = doc_data['content']
+                    content = doc_data['content'] # html AND text
                     url = doc_data['url']
 
                     soup = BeautifulSoup(content, "html.parser")
                     text_content = soup.get_text(separator=" ").strip()
 
                     content_tokens = tokenize(text_content)
-                    self.add_document(doc_id, content_tokens, url)
+                    self.add_document(doc_id, content_tokens, url, soup)
 
                 self.save_partial_index(partial_index_num)
                 partial_index_num += 1
@@ -229,6 +259,6 @@ class Indexer:
         if self.inverted_index:
             self.save_partial_index(partial_index_num)
 
-        self.save_doc_id_url_map()  # DEBUG
+        self.save_doc_id_url_map()  # FOR DEBUG
         self.multi_way_merge()  # build final index
         self.finish_final_index()  # build bookkeeping index & doc vector length once final index done

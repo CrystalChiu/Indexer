@@ -14,6 +14,12 @@ class Searcher:
         self.final_index_file = indexer.final_index_file  # path to final inverted index
         self.doc_id_url_map = indexer.doc_id_url_map  # docID to URL map
         self.N = len(self.doc_id_url_map)
+        self.field_weights = {
+            "title": 2,
+            "header": 1.5,
+            "bold": 1.15,
+            "misc": 1.0,  # default weight
+        }
 
         print(f"secondary index len: {len(self.secondary_index)}")
         print(f"doc map len: {len(self.doc_id_url_map)}")
@@ -76,7 +82,10 @@ class Searcher:
                 doc_id = posting['doc_id']
                 tf = posting['tf']
                 idf = math.log(self.N / len(postings))
-                doc_weight = tf * idf
+                base_doc_weight = tf * idf
+
+                field_boost = sum(self.field_weights.get(field, 1.0) for field in posting.get("fields", ["misc"]))
+                doc_weight = base_doc_weight * field_boost
 
                 if doc_id not in doc_vectors:
                     doc_vectors[doc_id] = 0
@@ -103,9 +112,8 @@ class Searcher:
         ranked_results = sorted(heap, key=lambda x: x[0], reverse=True)
 
         # DEBUG
-        # return [(self.doc_id_url_map[doc_id], score) for score, doc_id in ranked_results]
-
-        return [self.doc_id_url_map[doc_id] for score, doc_id in ranked_results]
+        return [(self.doc_id_url_map[doc_id], score) for score, doc_id in ranked_results]
+        # return [self.doc_id_url_map[doc_id] for score, doc_id in ranked_results]
 
     #-----------Boolean Search-----------
     # Handles AND boolean queries, returns a list of the top 5 URLs returned
