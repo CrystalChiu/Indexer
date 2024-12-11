@@ -43,7 +43,7 @@ class Searcher:
     # convert a query into its vector representation weighted by tf-idf
     def process_query(self, query):
         query_tokens = tokenize(query)
-        print(f"query tokens: {query_tokens}")
+        # print(f"query tokens: {query_tokens}")
         tfs = defaultdict(int)
 
         for token in query_tokens:
@@ -112,12 +112,16 @@ class Searcher:
         ranked_results = sorted(heap, key=lambda x: x[0], reverse=True)
 
         # DEBUG
-        return [(self.doc_id_url_map[doc_id], score) for score, doc_id in ranked_results]
-        # return [self.doc_id_url_map[doc_id] for score, doc_id in ranked_results]
+        # return [(self.doc_id_url_map[doc_id], score) for score, doc_id in ranked_results]
+        return [self.doc_id_url_map[doc_id] for score, doc_id in ranked_results]
 
     #-----------Boolean Search-----------
+    # NOTE: Deprecated
     # Handles AND boolean queries, returns a list of the top 5 URLs returned
     def bool_search(self, query):
+        # process in order of increasing frequency -> start smallest and continue cutting (doc freq)
+        # ex: brutus AND calpurnia AND caesar ---> (calpurnia AND brutus) AND ceasar
+        # get and of each term in posting
         stemmer = PorterStemmer()
         terms = query.split(' ')
     
@@ -140,10 +144,9 @@ class Searcher:
         # sort the posting lists by length (smallest first for optimization)
         posting_lists.sort(key=len)
     
-        # perform intersection of the posting lists
+        # result set is set intersection of posting lists
         result_set = set(posting['doc_id'] for posting in posting_lists[0])  # Start with the smallest list
         for posting_list in posting_lists[1:]:
-            # Use set intersection to retain only the `doc_id`s present in both sets
             result_set &= set(posting['doc_id'] for posting in posting_list)
             if not result_set:
                 print("No documents match the query.")
@@ -154,7 +157,7 @@ class Searcher:
             for posting in posting_list:
                 if posting['doc_id'] in result_set:
                     intersected_postings.append(posting)
-    
+
         intersected_postings.sort(key=lambda p: p['tf'], reverse=True)
     
         return list(intersected_postings)
